@@ -1,1 +1,3 @@
 /file-indexing-service.code-workspace
+/target
+dependency-reduced-pom.xml
