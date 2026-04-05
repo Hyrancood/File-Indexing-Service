@@ -10,11 +10,11 @@ import org.slf4j.LoggerFactory;
 public interface Tokenizer {
     Stream<String> tokenize(String input);
     
-    public default Stream<String> indexFile(Path file) {
+    public default Stream<String> tokenizeFile(Path file) {
         try {
             String content = Files.readString(file);
-            LoggerFactory.getLogger(this.getClass()).info(content);
-            return tokenize(content);
+            Stream<String> tokens = tokenize(content);
+            return (tokens == null) ? Stream.empty() : tokens;
         } catch (IOException e) {
             LoggerFactory.getLogger(this.getClass()).error("Failed to read file: " + file, e);
         }

@@ -7,6 +7,8 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.slf4j.LoggerFactory;
+
 import com.shapiro.core.FileWatcher;
 import com.shapiro.core.IndexStore;
 import com.shapiro.interfaces.Indexer;
@@ -23,7 +25,7 @@ public class TextFileIndexer implements Indexer {
         this.store = store;
         this.tokenizer = tokenizer;
         this.workerPool = Executors.newFixedThreadPool(threadPoolSize);
-        this.watcher = new FileWatcher(store, tokenizer, workerPool);
+        this.watcher = new FileWatcher(store, tokenizer, workerPool, TextFileIndexer::isPlainTextFile);
         this.watcherThread = new Thread(watcher);
         watcherThread.start();
     }
@@ -36,12 +38,13 @@ public class TextFileIndexer implements Indexer {
             .filter(Files::isRegularFile)
             .filter(TextFileIndexer::isPlainTextFile)
             .forEach(file -> workerPool.submit(() -> {
-                    tokenizer.indexFile(file).forEach(token -> store.add(token, file));
+                    tokenizer.tokenizeFile(file).forEach(token -> store.add(token, file));
                 }));
         } catch (IOException e) {
+            LoggerFactory.getLogger(getClass()).error("Failed to index path: {}", path, e);
             e.printStackTrace();
+
         }
-        
     }
 
     private static boolean isPlainTextFile(Path path) {
@@ -49,7 +52,21 @@ public class TextFileIndexer implements Indexer {
             String type = Files.probeContentType(path);
             return type != null && "text/plain".equals(type);
         } catch (IOException e) {
+            LoggerFactory.getLogger(TextFileIndexer.class).error("Failed to probe content type for path: {}", path, e);
             return false;
+        }
+    }
+
+    @Override
+    public void removePath(Path path) {
+        try {
+            watcher.unregisterRecursively(path);
+            Files.walk(path)
+                .filter(Files::isRegularFile)
+                .filter(TextFileIndexer::isPlainTextFile)
+                .forEach(file -> store.removeFile(file));
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 

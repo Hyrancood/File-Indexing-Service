@@ -11,9 +11,12 @@ import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Predicate;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,17 +30,19 @@ public class FileWatcher implements Runnable {
     private final ExecutorService executor;
     private final IndexStore indexStore;
     private final Tokenizer tokenizer;
+    private final Predicate<Path> fileFilter;
     private volatile boolean running = true;
 
-    public FileWatcher(IndexStore indexStore, Tokenizer tokenizer, ExecutorService executor) throws IOException {
+    public FileWatcher(IndexStore indexStore, Tokenizer tokenizer, ExecutorService executor, Predicate<Path> fileFilter) throws IOException {
         this.indexStore = indexStore;
         this.tokenizer = tokenizer;
         this.executor = executor;
         this.watchService = FileSystems.getDefault().newWatchService();
+        this.fileFilter = fileFilter;
     }
 
     public void registerRecursively(Path root) throws IOException {
-        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+        Files.walkFileTree(root.normalize(), new SimpleFileVisitor<Path>() {
             @Override
             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
                 WatchKey key = dir.register(watchService, 
@@ -48,7 +53,48 @@ public class FileWatcher implements Runnable {
                 keys.put(key, dir);
                 return FileVisitResult.CONTINUE;
             }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                if (!attrs.isDirectory() && fileFilter.test(file)) {
+                    executor.submit(() -> {
+                        tokenizer.tokenizeFile(file).forEach(token -> indexStore.add(token, file));
+                    });
+                }
+                return FileVisitResult.CONTINUE;
+            }
         });
+    }
+
+    public void unregisterRecursively(Path root) throws IOException {
+        if (root == null) {
+            return;
+        }
+        if (!Files.exists(root)) {
+            keys.entrySet().removeIf(entry -> entry.getValue().startsWith(root));
+            indexStore.getAllIndexedFiles().forEach(p -> {
+                if (p.startsWith(root)) {
+                    indexStore.removeFile(p);
+                }
+            });
+            return;
+        }
+        HashSet<Path> pathToDelete = new HashSet<>();
+        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                pathToDelete.add(dir);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                pathToDelete.add(file);
+                indexStore.removeFile(file);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        keys.entrySet().removeIf(entry -> pathToDelete.contains(entry.getValue()));
     }
 
     @Override
@@ -58,6 +104,7 @@ public class FileWatcher implements Runnable {
                 WatchKey key = watchService.take();
                 Path dir = keys.get(key);
                 if (dir == null) {
+                    if (!key.reset()) keys.remove(key);
                     continue;
                 }
                 for (WatchEvent<?> event : key.pollEvents()) {
@@ -70,22 +117,38 @@ public class FileWatcher implements Runnable {
                             registerRecursively(child);
                         } else {
                             executor.submit(() -> {
-                                tokenizer.indexFile(child).forEach(token -> indexStore.add(token, child));
+                                tokenizer.tokenizeFile(child).forEach(token -> indexStore.add(token, child));
                             });
                         }
                     } else if (kind == StandardWatchEventKinds.ENTRY_MODIFY) {
-                        executor.submit(() -> indexStore.update(child, tokenizer.indexFile(child)));
+                        if (Files.isRegularFile(child) && fileFilter.test(child)) {
+                            executor.submit(() -> indexStore.update(child, tokenizer.tokenizeFile(child)));
+                        }
                     } else if (kind == StandardWatchEventKinds.ENTRY_DELETE) {
-                        indexStore.removeFile(child);
+                        executor.submit(() -> {
+                            indexStore.getAllIndexedFiles().forEach(p -> {
+                                if (p.startsWith(child)) {
+                                    indexStore.removeFile(p);
+                                }
+                            });
+                        });
                     }
                 }
                 if (!key.reset()) {
                     keys.remove(key);
+                    try {
+                        Files.walk(dir)
+                            .filter(Files::isRegularFile)
+                            .forEach(indexStore::removeFile);
+                    } catch (IOException e) {
+                        // Директория уже недоступна, игнорируем
+                    }
                 }
             }
         } catch (IOException e) {
             logger.error("Error occurred while watching file system", e);
         } catch (InterruptedException e) {
+            logger.error("File watcher thread interrupted", e);
             Thread.currentThread().interrupt();
         }
     }
@@ -95,7 +158,7 @@ public class FileWatcher implements Runnable {
         try {
             watchService.close();
         } catch (IOException e) {
-            // logger
+            logger.error("Failed to close WatchService", e);
         }
     }
 

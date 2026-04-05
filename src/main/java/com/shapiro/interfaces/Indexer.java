@@ -6,6 +6,8 @@ import java.util.Set;
 public interface Indexer {
     
     void addPath(Path path);
+
+    void removePath(Path path);
     
     Set<Path> search(String token);
     

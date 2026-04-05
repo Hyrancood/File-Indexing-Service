@@ -7,6 +7,12 @@ import java.util.stream.Stream;
 import com.shapiro.interfaces.Tokenizer;
 
 public class SimpleTokenizer implements Tokenizer {
+    private final boolean caseSensitive;
+
+    public SimpleTokenizer(boolean caseSensitive) {
+        this.caseSensitive = caseSensitive;
+    }
+
     @Override
     public Stream<String> tokenize(String input) {
         if (input == null || input.isEmpty()) {
@@ -23,7 +29,11 @@ public class SimpleTokenizer implements Tokenizer {
             }
         }
         if (currentToken.length() > 0) {
-            tokens.add(currentToken.toString());
+            String token = currentToken.toString();
+            if (!caseSensitive) {
+                token = token.toLowerCase();
+            }
+            tokens.add(token);
         }
         return tokens.stream();
     }
