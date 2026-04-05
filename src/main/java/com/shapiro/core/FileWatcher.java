@@ -1,6 +1,7 @@
 package com.shapiro.core;
 
 import java.io.IOException;
+import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -115,7 +116,7 @@ public class FileWatcher implements Runnable {
                     if (kind == StandardWatchEventKinds.ENTRY_CREATE) {
                         if (Files.isDirectory(child)) {
                             registerRecursively(child);
-                        } else {
+                        } else if (fileFilter.test(child)) {
                             executor.submit(() -> {
                                 tokenizer.tokenizeFile(child).forEach(token -> indexStore.add(token, child));
                             });
@@ -145,10 +146,16 @@ public class FileWatcher implements Runnable {
                     }
                 }
             }
+        } catch (ClosedWatchServiceException e) {
+            logger.debug("WatchService closed, stopping watcher thread");
         } catch (IOException e) {
             logger.error("Error occurred while watching file system", e);
         } catch (InterruptedException e) {
-            logger.error("File watcher thread interrupted", e);
+            if (running) {
+                logger.warn("File watcher thread interrupted while running", e);
+            } else {
+                logger.debug("File watcher thread interrupted during shutdown", e);
+            }
             Thread.currentThread().interrupt();
         }
     }

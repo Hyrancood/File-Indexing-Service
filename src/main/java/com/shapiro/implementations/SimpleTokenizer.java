@@ -24,7 +24,11 @@ public class SimpleTokenizer implements Tokenizer {
             if (Character.isLetterOrDigit(c)) {
                 currentToken.append(c);        
             } else if (currentToken.length() > 0) {
-                tokens.add(currentToken.toString());
+                String token = currentToken.toString();
+                if (!caseSensitive) {
+                    token = token.toLowerCase();
+                }
+                tokens.add(token);
                 currentToken.setLength(0);
             }
         }

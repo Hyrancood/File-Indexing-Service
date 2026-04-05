@@ -1,6 +1,7 @@
 package com.shapiro.core;
 
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,11 +37,11 @@ public class IndexStore {
         words.remove(path);
     }
 
-    public Iterable<Path> getAllIndexedFiles() {
+    public Collection<Path> getAllIndexedFiles() {
         return words.keySet();
     }
 
-    public Iterable<String> getAllTokens() {
+    public Collection<String> getAllTokens() {
         return index.keySet();
     }
 }

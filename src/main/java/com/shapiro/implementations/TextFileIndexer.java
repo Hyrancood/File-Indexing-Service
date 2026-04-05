@@ -32,22 +32,24 @@ public class TextFileIndexer implements Indexer {
 
     @Override
     public void addPath(Path path) {
+        if (path == null || Files.notExists(path)) {
+            return;
+        }
+
         try {
             watcher.registerRecursively(path);
             Files.walk(path)
-            .filter(Files::isRegularFile)
-            .filter(TextFileIndexer::isPlainTextFile)
-            .forEach(file -> workerPool.submit(() -> {
+                .filter(Files::isRegularFile)
+                .filter(TextFileIndexer::isPlainTextFile)
+                .forEach(file -> workerPool.submit(() -> {
                     tokenizer.tokenizeFile(file).forEach(token -> store.add(token, file));
                 }));
         } catch (IOException e) {
             LoggerFactory.getLogger(getClass()).error("Failed to index path: {}", path, e);
-            e.printStackTrace();
-
         }
     }
 
-    private static boolean isPlainTextFile(Path path) {
+    public static boolean isPlainTextFile(Path path) {
         try {
             String type = Files.probeContentType(path);
             return type != null && "text/plain".equals(type);
@@ -61,6 +63,9 @@ public class TextFileIndexer implements Indexer {
     public void removePath(Path path) {
         try {
             watcher.unregisterRecursively(path);
+            if (path == null || Files.notExists(path)) {
+                return;
+            }
             Files.walk(path)
                 .filter(Files::isRegularFile)
                 .filter(TextFileIndexer::isPlainTextFile)
@@ -78,7 +83,11 @@ public class TextFileIndexer implements Indexer {
     @Override
     public void stop() {
         watcher.stop();
-        watcherThread.interrupt();
+        try {
+            watcherThread.join(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         workerPool.shutdown();
     }
 
